@@ -42,32 +42,34 @@ jobs:
       - name: Generate Changelog
         id: changelog
         run: |
-          # Install conventional-changelog-cli
-          npm install -g conventional-changelog-cli
-          
-          # Ensure CHANGELOG.md exists
-          touch CHANGELOG.md
-          
-          # Generate changelog
-          # We generate it to a file
-          conventional-changelog -p angular -i CHANGELOG.md -s -r 0
-          
-          # Also capture the content for the release body
-          # Since we just updated the file, we need to extract the top entry?
-          # Actually, for the release body, it's easier to generate just the recent changes to a temp file
-          
-          # Determine the previous tag for the range
+          # Determine the previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           
+          echo "Previous tag: $PREV_TAG"
+          
+          # Generate changelog header
+          echo "## Release $VERSION" > release_notes.md
+          echo "" >> release_notes.md
+          echo "**Date**: $(date +'%Y-%m-%d')" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### Changes" >> release_notes.md
+          echo "" >> release_notes.md
+          
           if [ -z "$PREV_TAG" ]; then
-            conventional-changelog -p angular -o release_notes.md -r 0
+            # No previous tag, list all commits
+            git log --pretty=format:"- %s (%h)" >> release_notes.md
           else
-            conventional-changelog -p angular -o release_notes.md
+            # List commits since last tag
+            git log --pretty=format:"- %s (%h)" "$PREV_TAG"..HEAD >> release_notes.md
           fi
           
-          # If the file is empty (no changes or first run), put something generic
-          if [ ! -s release_notes.md ]; then
-            echo "Automated release $VERSION" > release_notes.md
+          echo "" >> release_notes.md
+          
+          # Append to main CHANGELOG.md (prepend actually)
+          if [ -f CHANGELOG.md ]; then
+            cat release_notes.md CHANGELOG.md > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
+          else
+            cat release_notes.md > CHANGELOG.md
           fi
 
       - name: Update Script Version

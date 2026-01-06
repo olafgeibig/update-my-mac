@@ -237,21 +237,4 @@ grep "exited with code:" ~/Library/Logs/update-my-mac/update-*.log | grep -v "co
 
 ## Contributing
 
-### Commit Conventions
-
-This project uses [Conventional Commits](https://www.conventionalcommits.org/) to automate versioning and changelog generation. Please use the following prefixes in your commit messages:
-
-- `feat:` for new features
-- `fix:` for bug fixes
-- `docs:` for documentation changes
-- `style:` for formatting/style changes
-- `refactor:` for code refactoring
-- `perf:` for performance improvements
-- `test:` for adding missing tests
-- `chore:` for maintenance tasks
-
-Example:
-```bash
-git commit -m "feat: add automatic log analysis"
-git commit -m "fix: resolve path issue in install function"
-```
+Contributions are welcome! Please feel free to submit a Pull Request.
