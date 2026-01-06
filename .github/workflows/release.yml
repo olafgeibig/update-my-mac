@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calculate Version
+        id: version
+        run: |
+          # Get current date
+          DATE_VERSION="v$(date +'%Y.%m.%d')"
+          
+          # Check for existing tags with this prefix
+          EXISTING_TAGS=$(git tag --list "${DATE_VERSION}*")
+          
+          if [ -z "$EXISTING_TAGS" ]; then
+            VERSION="$DATE_VERSION"
+          else
+            # Find the highest suffix
+            COUNT=$(echo "$EXISTING_TAGS" | wc -l)
+            VERSION="${DATE_VERSION}.${COUNT}"
+          fi
+          
+          echo "Calculated version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          # Install conventional-changelog-cli
+          npm install -g conventional-changelog-cli
+          
+          # Ensure CHANGELOG.md exists
+          touch CHANGELOG.md
+          
+          # Generate changelog
+          # We generate it to a file
+          conventional-changelog -p angular -i CHANGELOG.md -s -r 0
+          
+          # Also capture the content for the release body
+          # Since we just updated the file, we need to extract the top entry?
+          # Actually, for the release body, it's easier to generate just the recent changes to a temp file
+          
+          # Determine the previous tag for the range
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          
+          if [ -z "$PREV_TAG" ]; then
+            conventional-changelog -p angular -o release_notes.md -r 0
+          else
+            conventional-changelog -p angular -o release_notes.md
+          fi
+          
+          # If the file is empty (no changes or first run), put something generic
+          if [ ! -s release_notes.md ]; then
+            echo "Automated release $VERSION" > release_notes.md
+          fi
+
+      - name: Update Script Version
+        run: |
+          # Update the version in the script if it exists
+          # We will look for VERSION="..." or similar pattern
+          if grep -q 'VERSION=' update-my-mac.sh; then
+            sed -i "s/VERSION=.*/VERSION=\"${{ steps.version.outputs.version }}\"/" update-my-mac.sh
+          fi
+
+      - name: Commit Changelog and Version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add CHANGELOG.md update-my-mac.sh
+          
+          # Only commit if there are changes
+          if ! git diff --staged --quiet; then
+            git commit -m "chore(release): prepare release ${{ steps.version.outputs.version }}"
+            git push origin main
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          body_path: release_notes.md
+          files: |
+            update-my-mac.sh
+            CHANGELOG.md
