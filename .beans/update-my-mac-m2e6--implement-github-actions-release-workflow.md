@@ -1,11 +1,11 @@
 ---
 # update-my-mac-m2e6
 title: Implement GitHub Actions Release Workflow
-status: in-progress
+status: completed
 type: feature
 priority: normal
 created_at: 2026-01-06T15:22:20Z
-updated_at: 2026-01-06T15:23:37Z
+updated_at: 2026-01-06T15:28:18Z
 ---
 
 Create a GitHub Actions workflow to automate releases.
