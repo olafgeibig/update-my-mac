@@ -1,10 +1,11 @@
 ---
 # update-my-mac-3i9q
 title: Add update profiles (quick/full) to skip slow updates
-status: in-progress
+status: completed
 type: feature
+priority: normal
 created_at: 2026-01-07T19:14:14Z
-updated_at: 2026-01-07T19:14:14Z
+updated_at: 2026-01-07T19:17:22Z
 ---
 
 Add preset update profiles to make system updates more convenient:

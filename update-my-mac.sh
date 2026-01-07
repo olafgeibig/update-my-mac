@@ -406,7 +406,7 @@ show_help() {
     echo "  --npm        Update npm and global npm packages"
     echo "  --bun        Update Bun and global Bun packages"
     echo "  --uv         Update uv and global uv packages"
-    echo "  --agents    Clear AI development plugin caches (forces reinstall on next startup)"
+    echo "  --plugins    Clear AI development plugin caches (forces reinstall on next startup)"
     echo "  --appstore   Update App Store applications (requires mas-cli)"
     echo "  --xcode      Update Xcode and command line tools"
     echo "  --system     Check for macOS system updates"
@@ -464,7 +464,7 @@ while [ $# -gt 0 ]; do
             show_log_info
             analyze_log
             ;;
-        --agents)
+        --plugins)
             update_plugins
             echo -e "\n${GREEN}✓ Plugin cache clearing completed${NC}"
             show_log_info
