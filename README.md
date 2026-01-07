@@ -161,65 +161,6 @@ The script works perfectly without the `llm` tool - analysis is simply skipped w
 
 The script gracefully handles missing dependencies and provides clear error messages with installation instructions when tools are not available.
 
-## New Features
-
-### 🆕 Comprehensive Logging & Analysis
-The script now provides intelligent logging and automatic analysis:
-```bash
-update-my-mac --all
-
-# Automatic features:
-# • Timestamped logging to ~/Library/Logs/update-my-mac/
-# • Command execution with exit codes and duration
-# • LLM analysis when llm tool is available
-# • Error identification and actionable recommendations
-```
-
-### Bun Support
-The script now supports updating Bun, modern JavaScript runtime and package manager:
-```bash
-update-my-mac --bun
-```
-
-### AI Development Tools
-Keep your AI development tools up to date with the new plugins option:
-```bash
-update-my-mac --plugins
-```
-This updates both OpenCode and Claude Code if they're installed.
-
-### System-wide Installation
-Install the script for system-wide access:
-```bash
-./update-my-mac.sh --install
-```
-The script will be available as `update-my-mac` from any directory.
-
-## Changelog
-
-### v1.3.0 - Latest
-- ✅ **Added update profiles**: New `--quick` (fast updates) and `--full` (all updates) options
-- ✅ **Changed default behavior**: Running with no arguments now runs quick updates (brew, npm, bun, uv, plugins) instead of all updates
-- ✅ **Improved convenience**: Quick mode takes ~1-2 minutes, full mode includes slow App Store, Xcode, and System updates
-- ✅ **Added `--full` option**: Alias for `--all` with clearer semantics
-
-### v1.2.0
-- ✅ **Added comprehensive logging**: All operations automatically logged to `~/Library/Logs/update-my-mac/`
-- ✅ **Added intelligent LLM analysis**: Automatic analysis when `llm` tool is available
-- ✅ **Added dual output**: Commands output to both console and log file with timestamps
-- ✅ **Added log metadata**: Exit codes, execution duration, and structured log levels
-- ✅ **Added automatic log file management**: Unique timestamps, clean formatting, color stripping
-- ✅ **Added smart LLM integration**: Detects `llm` tool and runs analysis automatically
-- ✅ **Added actionable insights**: Analysis identifies errors, manual actions, and recommendations
-
-### v1.1.0
-- ✅ Added Bun package manager support
-- ✅ Added AI plugin updates (OpenCode, Claude Code)
-- ✅ Added system-wide installation to `/usr/local/bin`
-- ✅ Added uninstall functionality
-- ✅ Enhanced help documentation
-- ✅ Improved error handling for new features
-
 ## Troubleshooting
 
 ### Viewing Logs
