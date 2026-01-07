@@ -304,6 +304,19 @@ update_system() {
     print_warning "Note: System updates may require a restart"
 }
 
+# Function to run quick updates only (fast updates, ~1-2 minutes)
+update_quick() {
+    update_brew
+    update_npm
+    update_bun
+    update_uv
+    update_plugins
+    
+    # Show log information and run analysis
+    show_log_info
+    analyze_log
+}
+
 # Function to run all updates
 update_all() {
     update_brew
@@ -386,7 +399,9 @@ show_help() {
     echo "Update various software on your macOS system."
     echo ""
     echo "Options:"
-    echo "  --all        Update everything (default if no option is provided)"
+    echo "  --quick      Run quick updates only (brew, npm, bun, uv, plugins) - default"
+    echo "  --full       Update everything (includes appstore, xcode, system)"
+    echo "  --all        Update everything (alias for --full)"
     echo "  --brew       Update Homebrew and its packages"
     echo "  --npm        Update npm and global npm packages"
     echo "  --bun        Update Bun and global Bun packages"
@@ -407,9 +422,9 @@ show_help() {
 # Initialize logging
 init_logging
 
-# If no arguments, run all updates
+# If no arguments, run quick updates (fast updates only)
 if [ $# -eq 0 ]; then
-    update_all
+    update_quick
     exit 0
 fi
 
@@ -417,6 +432,12 @@ fi
 while [ $# -gt 0 ]; do
     case "$1" in
         --all)
+            update_all
+            ;;
+        --quick)
+            update_quick
+            ;;
+        --full)
             update_all
             ;;
         --brew)

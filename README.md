@@ -4,6 +4,7 @@ A comprehensive macOS system update utility that keeps your development tools an
 
 ## Features
 
+- **🆕 Update Profiles**: Quick mode (fast updates ~1-2 min) and full mode (all updates)
 - **Homebrew**: Updates package manager and all installed packages
 - **npm**: Updates npm itself and global packages  
 - **Bun**: Updates Bun package manager and global packages
@@ -14,8 +15,8 @@ A comprehensive macOS system update utility that keeps your development tools an
 - **System**: Checks for macOS system updates
 - **Cleanup**: Removes cached and temporary files
 - **Installation**: Installs script system-wide to `/usr/local/bin`
-- **🆕 Comprehensive Logging**: Automatic logging of all operations to canonical macOS log locations
-- **🆕 Intelligent Analysis**: Automatic LLM analysis using Simon Willison's `llm` tool when available
+- **Comprehensive Logging**: Automatic logging of all operations to canonical macOS log locations
+- **Intelligent Analysis**: Automatic LLM analysis using Simon Willison's `llm` tool when available
 
 ## Usage
 
@@ -23,10 +24,14 @@ A comprehensive macOS system update utility that keeps your development tools an
 # Make script executable
 chmod +x update-my-mac.sh
 
-# Update everything (default behavior)
+# Quick update (default) - fast updates only (~1-2 minutes)
 ./update-my-mac.sh
-
 # Or explicitly
+./update-my-mac.sh --quick
+
+# Full update - includes slow App Store, Xcode, and System updates
+./update-my-mac.sh --full
+# Or
 ./update-my-mac.sh --all
 
 # Update specific components
@@ -53,8 +58,11 @@ chmod +x update-my-mac.sh
 Once installed with `--install`, you can run the script from anywhere:
 
 ```bash
-# Update everything
+# Quick update (fast updates only - ~1-2 minutes)
 update-my-mac
+
+# Full update (includes slow updates)
+update-my-mac --full
 
 # Update specific components
 update-my-mac --bun
@@ -189,7 +197,13 @@ The script will be available as `update-my-mac` from any directory.
 
 ## Changelog
 
-### v1.2.0 - Latest
+### v1.3.0 - Latest
+- ✅ **Added update profiles**: New `--quick` (fast updates) and `--full` (all updates) options
+- ✅ **Changed default behavior**: Running with no arguments now runs quick updates (brew, npm, bun, uv, plugins) instead of all updates
+- ✅ **Improved convenience**: Quick mode takes ~1-2 minutes, full mode includes slow App Store, Xcode, and System updates
+- ✅ **Added `--full` option**: Alias for `--all` with clearer semantics
+
+### v1.2.0
 - ✅ **Added comprehensive logging**: All operations automatically logged to `~/Library/Logs/update-my-mac/`
 - ✅ **Added intelligent LLM analysis**: Automatic analysis when `llm` tool is available
 - ✅ **Added dual output**: Commands output to both console and log file with timestamps
