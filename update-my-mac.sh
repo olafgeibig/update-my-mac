@@ -3,7 +3,7 @@
 # Description: Script to update various software on macOS
 # Date: June 6, 2025
 # Author: GEO5BE4
-VERSION="v2026.01.06"
+VERSION="v2026.01.07"
 
 # Color definitions for better output
 GREEN='\033[0;32m'
