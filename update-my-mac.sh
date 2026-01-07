@@ -206,25 +206,27 @@ update_bun() {
 
 # Function to update AI development plugins
 update_plugins() {
-    print_header "Updating AI development plugins"
+    print_header "Clearing AI development plugin caches"
     
-    # Update opencode
-    if command -v opencode &> /dev/null; then
-        log_command "opencode upgrade" "Updating OpenCode..."
-        print_success "OpenCode update completed"
+    # Clear opencode plugin cache
+    local opencode_cache="$HOME/.cache/opencode/node_modules"
+    if [ -d "$opencode_cache" ]; then
+        log_command "rm -rf \"$opencode_cache\"" "Clearing OpenCode plugin cache..."
+        print_success "OpenCode plugin cache cleared - will reinstall on next startup"
     else
-        print_warning "OpenCode is not installed"
+        print_warning "OpenCode plugin cache not found at $opencode_cache"
     fi
     
-    # Update Claude Code
-    if command -v claude &> /dev/null; then
-        log_command "claude update" "Updating Claude Code..."
-        print_success "Claude Code update completed"
+    # Clear Claude Code plugin cache
+    local claude_cache="$HOME/.claude/plugins/cache"
+    if [ -d "$claude_cache" ]; then
+        log_command "rm -rf \"$claude_cache\"/*" "Clearing Claude Code plugin cache..."
+        print_success "Claude Code plugin cache cleared - will reinstall on next startup"
     else
-        print_warning "Claude Code is not installed"
+        print_warning "Claude Code plugin cache not found at $claude_cache"
     fi
     
-    print_success "Plugin updates completed"
+    print_success "Plugin cache clearing completed"
 }
 
 # Function to update uv global packages
@@ -389,7 +391,7 @@ show_help() {
     echo "  --npm        Update npm and global npm packages"
     echo "  --bun        Update Bun and global Bun packages"
     echo "  --uv         Update uv and global uv packages"
-    echo "  --plugins    Update AI development plugins (opencode, claude)"
+    echo "  --agents    Clear AI development plugin caches (forces reinstall on next startup)"
     echo "  --appstore   Update App Store applications (requires mas-cli)"
     echo "  --xcode      Update Xcode and command line tools"
     echo "  --system     Check for macOS system updates"
@@ -441,9 +443,9 @@ while [ $# -gt 0 ]; do
             show_log_info
             analyze_log
             ;;
-        --plugins)
+        --agents)
             update_plugins
-            echo -e "\n${GREEN}✓ Plugin updates completed${NC}"
+            echo -e "\n${GREEN}✓ Plugin cache clearing completed${NC}"
             show_log_info
             analyze_log
             ;;
