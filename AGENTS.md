@@ -14,12 +14,19 @@ Since this is a shell script repository, there are no traditional build/test com
 # Make the script executable
 chmod +x update-my-mac.sh
 
-# Test the script (dry run with help)
+# Syntax check without executing anything
+zsh -n update-my-mac.sh
+
+# Test the script (help / report)
 ./update-my-mac.sh --help
+./update-my-mac.sh --report          # read-only: eligible vs held, no changes
 
 # Test individual components safely
-./update-my-mac.sh --brew
+./update-my-mac.sh --dry-run --brew  # prints the gated upgrade command
 ./update-my-mac.sh --cleanup
+
+# Cooldown gate: offline self-test of the classification rules
+python3 lib/cooldown.py selftest
 
 # Shell script linting (if shellcheck is available)
 shellcheck update-my-mac.sh
@@ -66,13 +73,30 @@ shellcheck update-my-mac.sh
 ### Code Organization
 
 1. **Function Structure**: Group related functions together:
-   - Output functions (print_*): lines 14-32
-   - Update functions (update_*): lines 34-171
-   - Utility functions (cleanup, show_help): lines 175-198
+   - Cooldown policy block (`COOLDOWN_*`, `SCRIPT_DIR`, `COOLDOWN_HELPER`): top of file
+   - Output functions (print_*), logging
+   - Update functions (update_*): one per package manager
+   - Cooldown functions (cooldown_report, cooldown_status, cooldown_sync)
+   - Utility functions (cleanup, install_script, show_help)
 
 2. **Main Execution**: Keep main script logic at the bottom:
-   - Argument parsing: lines 200-246
-   - Default behavior: lines 203-206
+   - Policy flag pre-scan (`--bypass`, `--no-cooldown`, `--dry-run`, `--plugins-force`)
+   - Argument parsing loop
+   - Default behavior (no arguments -> `update_quick`)
+
+3. **Cooldown Policy (`lib/cooldown.py`)**:
+   - The threshold lives in `~/.config/cooldown/cooldown.env` (`COOLDOWN_HOURS`) and is
+     the only place it may change. `--cooldown-sync` rewrites every per-tool config from
+     it, because the units differ per tool (npm days, pnpm minutes, bun seconds,
+     uv/cargo duration strings). Never copy a number between them.
+   - Homebrew has no native minimum release age, so `update_brew` classifies pending
+     upgrades by the merge date of the formula/cask, upgrades **explicit names** only,
+     and fails closed when a date cannot be established.
+   - Never reintroduce a bare `brew upgrade`, a `brew upgrade <pkg>` outside the gate
+     (it would bypass the window), or a plugin-cache wipe on every run (a cache clear
+     forces a fresh resolve). Use `--plugins-force` / `--bypass` for deliberate exceptions.
+   - `python3 lib/cooldown.py selftest` covers the classification rules offline; keep it
+     green when touching the gate.
 
 ### Best Practices
 
@@ -91,6 +115,9 @@ When adding new package manager support:
 3. Use consistent print functions for status updates
 4. Add the new option to the case statement in main script
 5. Update the `show_help()` function with the new option
+6. Check the cooldown: if the tool has a native minimum-release-age setting, configure it
+   globally and stop (do not add a wrapper); if it has none, gate it like Homebrew or
+   document it as an accepted gap. Never call it with "install the newest" semantics.
 
 ### Testing Guidelines
 
@@ -101,9 +128,13 @@ When adding new package manager support:
 
 ### Documentation Standards
 
-1. Keep README.md concise and focused on end-user usage
-2. Include command-line options in help text
-3. Document dependency requirements in error messages
-4. Use clear, user-friendly language in all output
+1. Keep README.md concise and focused on end-user usage — it is orientation, not reference
+2. Policies and rationale go in `docs/`: `cooldown.md` (the policy), `homebrew-gate.md`
+   (how the gate decides), `operations.md` (cadence, logs, troubleshooting)
+3. Plans and design drafts live in `.hermes/plans/`, not in the repository root or `docs/`;
+   once a plan is implemented, its content belongs in `docs/` instead
+4. Include command-line options in help text
+5. Document dependency requirements in error messages
+6. Use clear, user-friendly language in all output
 
 This repository follows simple, maintainable shell scripting practices with emphasis on user experience through clear output and robust error handling.

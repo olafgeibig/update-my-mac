@@ -1,195 +1,119 @@
 # update-my-mac
 
-A comprehensive macOS system update utility that keeps your development tools and applications up to date with a single command.
+One command to update Homebrew, npm, pnpm, Bun, uv, App Store apps, Xcode and macOS itself —
+without installing a package version that was published five minutes ago.
 
 ## Features
 
-- **🆕 Update Profiles**: Quick mode (fast updates ~1-2 min) and full mode (all updates)
-- **Homebrew**: Updates package manager and all installed packages
-- **npm**: Updates npm itself and global packages  
-- **Bun**: Updates Bun package manager and global packages
-- **uv**: Updates uv tool and global Python packages
-- **AI Plugins**: Updates OpenCode and Claude Code development tools
-- **App Store**: Updates Mac App Store applications (requires mas-cli)
-- **Xcode**: Updates Xcode and command line tools
-- **System**: Checks for macOS system updates
-- **Cleanup**: Removes cached and temporary files
-- **Installation**: Installs script system-wide to `/usr/local/bin`
-- **Comprehensive Logging**: Automatic logging of all operations to canonical macOS log locations
-- **Intelligent Analysis**: Automatic LLM analysis using Simon Willison's `llm` tool when available
+- **Update cooldown** — nothing younger than 72 h is installed. Enforced natively by uv,
+  npm, pnpm, bun, deno and cargo, and by a commit-date gate for Homebrew.
+- **Tiered Homebrew policy** — casks and third-party taps wait 72 h, human-reviewed
+  `homebrew-core` formulae only 24 h, so security patches are not held for days.
+- **Two profiles** — `--quick` (about 1–2 min) and `--full` (adds App Store, Xcode, macOS).
+- **Ships its own gate** — `lib/cooldown.py` decides what Homebrew may upgrade and upgrades
+  explicit targets only; a bare `brew upgrade` never runs.
+- **Read-only report** — `--report` shows what would update, what is held, and why.
+- **Fail-closed** — if a release date cannot be established, the package is not touched.
+- **Logging and analysis** — every run logs to `~/Library/Logs/update-my-mac/`, optionally
+  summarised by Simon Willison's `llm` when installed.
 
-## Usage
+## Quick start
 
 ```bash
-# Make script executable
 chmod +x update-my-mac.sh
-
-# Quick update (default) - fast updates only (~1-2 minutes)
-./update-my-mac.sh
-# Or explicitly
-./update-my-mac.sh --quick
-
-# Full update - includes slow App Store, Xcode, and System updates
-./update-my-mac.sh --full
-# Or
-./update-my-mac.sh --all
-
-# Update specific components
-./update-my-mac.sh --brew        # Homebrew packages only
-./update-my-mac.sh --npm         # npm packages only
-./update-my-mac.sh --bun         # Bun packages only
-./update-my-mac.sh --uv          # uv packages only
-./update-my-mac.sh --plugins     # AI development plugins only
-./update-my-mac.sh --appstore    # App Store apps only
-./update-my-mac.sh --xcode       # Xcode updates only
-./update-my-mac.sh --system      # System updates only
-./update-my-mac.sh --cleanup     # Clean caches only
-
-# Install/uninstall script system-wide
-./update-my-mac.sh --install     # Install to /usr/local/bin
-./update-my-mac.sh --uninstall   # Remove from /usr/local/bin
-
-# Show help
-./update-my-mac.sh --help
+./update-my-mac.sh --report      # look first, change nothing
+./update-my-mac.sh --quick       # gated updates (default with no flag)
+./update-my-mac.sh --full        # add App Store, Xcode, macOS
 ```
 
-### After Installation
+## Update cooldown
 
-Once installed with `--install`, you can run the script from anywhere:
+Supply-chain attacks publish a malicious release and pull it again within hours. Every
+update path here therefore refuses versions younger than the configured window.
+
+| Manager | Enforced by |
+|---|---|
+| uv, npm, pnpm, bun, deno, cargo | each tool's own global config (`exclude-newer`, `min-release-age`, `minimumReleaseAge`, …) |
+| Homebrew | `lib/cooldown.py` — merge date of the formula/cask must be older than the window |
+| VS Code | `extensions.autoUpdateDelay` (auto-updates only) |
+
+The windows live in one file:
 
 ```bash
-# Quick update (fast updates only - ~1-2 minutes)
-update-my-mac
-
-# Full update (includes slow updates)
-update-my-mac --full
-
-# Update specific components
-update-my-mac --bun
-update-my-mac --plugins
+cat ~/.config/cooldown/cooldown.env     # COOLDOWN_HOURS=72 / COOLDOWN_HOURS_CORE=24
+./update-my-mac.sh --cooldown-sync      # re-derive every per-tool value from them
+./update-my-mac.sh --cooldown-status    # what is actually in effect, per manager
 ```
+
+Full policy, exemptions and limitations: [`docs/cooldown.md`](docs/cooldown.md).
 
 ## Requirements
 
-- macOS
-- Zsh (default on modern macOS)
-- Optional tools for specific features:
-  - Homebrew for package management
-  - Bun for JavaScript package management
-  - uv for Python package management
-  - OpenCode for AI development
-  - Claude Code for AI development
-  - mas-cli for App Store updates (`brew install mas`)
-  - **llm** for intelligent log analysis (`pip install llm` - optional)
+- macOS with Zsh
+- `python3` — runs the Homebrew gate
+- `gh`, authenticated — the gate reads formula/cask merge dates through it
+- Optional: Homebrew, Bun, uv, mas, `llm` for log analysis
+
+Without `gh` the gate falls back to local tap clones and otherwise holds packages rather
+than upgrading them. `--cooldown-status` shows what is effective.
 
 ## Installation
 
-### Local Installation
+The script is not a single file: the gate lives in `lib/cooldown.py` and must sit next to
+it. Install from a checkout (or a release tarball that contains `lib/`).
+
+### One-line install (no checkout)
+
 ```bash
-# Clone or download the script
+curl -fsSL https://raw.githubusercontent.com/olafgeibig/update-my-mac/main/install.sh | bash
+```
+
+It downloads the release tarball, verifies its SHA256, and installs the same tree as
+below. Pin a version with `... | bash -s -- --ref v2026.10.23`. It refuses to install if
+the checksum file is missing or does not match.
+
+### From a checkout
+
+```bash
+git clone https://github.com/olafgeibig/update-my-mac.git
+cd update-my-mac
 chmod +x update-my-mac.sh
-./update-my-mac.sh --help
+./update-my-mac.sh --install       # /usr/local/libexec tree + symlink in /usr/local/bin
+update-my-mac --version            # version, helper state, installed layout
 ```
 
-### System-wide Installation
-```bash
-# Install to /usr/local/bin for system-wide access
-./update-my-mac.sh --install
+Layout:
 
-# After installation, use from anywhere:
-update-my-mac --help
-
-# Uninstall when needed
-./update-my-mac.sh --uninstall
+```
+/usr/local/libexec/update-my-mac/update-my-mac.sh
+/usr/local/libexec/update-my-mac/lib/cooldown.py
+/usr/local/bin/update-my-mac -> ../libexec/update-my-mac/update-my-mac.sh
 ```
 
-## Output
-
-The script provides color-coded output:
-- 🔵 Blue section headers
-- ✅ Green success messages
-- ⚠️ Yellow warnings
-- ❌ Red error messages
-
-### Logging and Analysis
-
-**Automatic Logging**: All operations are automatically logged to:
-```
-~/Library/Logs/update-my-mac/update-YYYYMMDD_HHMMSS.log
-```
-
-**Log Contents**:
-- Timestamped entries with log levels ([INFO], [SUCCESS], [ERROR], [WARNING])
-- All commands executed with their full output
-- Exit codes and execution duration
-- Color codes stripped for clean log files
-
-**Intelligent Analysis**: When Simon Willison's `llm` tool is available, the script automatically:
-- Analyzes the complete log file after updates
-- Identifies errors, failures, or warnings that need attention
-- Provides a summary of what was successfully updated
-- Highlights specific manual actions the user needs to take
-- Offers recommendations for follow-up maintenance
-
-**Example Analysis Output**:
-```
-🤖 Analyzing log file with LLM...
-
-### 1. Errors, Failures, or Warnings
-- No errors occurred during the update process
-
-### 2. Summary of Updates
-- Homebrew: 5 packages updated
-- npm: 3 global packages updated
-- ✅ All updates completed successfully
-
-### 3. Specific Manual Actions Required
-- Xcode command line tools update pending: run `softwareupdate --install --all --agree-to-license`
-
-### 4. Recommendations
-- Consider restarting terminal to ensure updated tools are in PATH
-```
-
-**Install LLM Tool** (optional):
-```bash
-pip install llm
-```
-
-The script works perfectly without the `llm` tool - analysis is simply skipped with a helpful installation tip.
-
-## Error Handling
-
-The script gracefully handles missing dependencies and provides clear error messages with installation instructions when tools are not available.
-
-## Troubleshooting
-
-### Viewing Logs
-All logs are stored in `~/Library/Logs/update-my-mac/` with timestamped filenames:
+The symlink is the only thing in `PATH`; the script resolves it and finds its helper. An
+existing flat-file install is backed up to `update-my-mac.backup.<timestamp>` (the two
+newest are kept), and `--install` refuses to run when `lib/cooldown.py` is missing — an
+install without it would silently refuse every Homebrew upgrade.
 
 ```bash
-# List all log files
-ls -la ~/Library/Logs/update-my-mac/
-
-# View latest log file
-less ~/Library/Logs/update-my-mac/update-$(date +%Y%m%d_*.log | tail -1)
-
-# View log with system Console.app
-open ~/Library/Logs/update-my-mac/
+cd update-my-mac && git pull && ./update-my-mac.sh --install   # upgrade an existing install
+./update-my-mac.sh --uninstall                                  # remove link and tree
 ```
 
-### Log Analysis Without LLM Tool
-Even without the `llm` tool, you can manually analyze logs:
-```bash
-# Search for errors in log
-grep -i error ~/Library/Logs/update-my-mac/update-*.log
+Environment overrides: `UPDATE_MY_MAC_PREFIX` (default `/usr/local`) and
+`UPDATE_MY_MAC_HELPER` (default `<script dir>/lib/cooldown.py`).
 
-# Search for warnings
-grep -i warning ~/Library/Logs/update-my-mac/update-*.log
+## Documentation
 
-# See failed commands
-grep "exited with code:" ~/Library/Logs/update-my-mac/update-*.log | grep -v "code: 0"
-```
+| Document | Read it when |
+|---|---|
+| [`docs/cooldown.md`](docs/cooldown.md) | you want the policy: windows, per-manager settings, exemptions, what is not covered |
+| [`docs/homebrew-gate.md`](docs/homebrew-gate.md) | you need to know how the Homebrew gate decides, or you are changing it |
+| [`docs/operations.md`](docs/operations.md) | a run failed, something is held unexpectedly, or you need an emergency bypass |
+| [`AGENTS.md`](AGENTS.md) | you are an agent working on this repository |
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome — please keep the cooldown contract intact: no bare
+`upgrade everything` call, no un-gated package manager, and
+`python3 lib/cooldown.py selftest` green.

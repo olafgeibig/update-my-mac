@@ -95,6 +95,39 @@ jobs:
             git push origin main
           fi
 
+      - name: Verify packaged tree
+        run: |
+          # The script needs lib/cooldown.py to run its Homebrew cooldown gate.
+          # Shipping the bare .sh would produce an install that refuses to
+          # upgrade anything, so fail here instead of in the field.
+          test -f update-my-mac.sh || { echo "update-my-mac.sh missing"; exit 1; }
+          test -f lib/cooldown.py || { echo "lib/cooldown.py missing - cannot package"; exit 1; }
+          python3 - "$PWD" <<'PY'
+          import ast, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          ast.parse((root / "lib/cooldown.py").read_text())  # syntax gate
+          sh = (root / "update-my-mac.sh").read_text()
+          for needed in ("lib/cooldown.py", "INSTALL_LIBDIR", "install_script"):
+              if needed not in sh:
+                  sys.exit(f"update-my-mac.sh does not reference {needed}")
+          print("packaged tree verified")
+          PY
+
+      - name: Build release artifact
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          NAME="update-my-mac-${VERSION}"
+          mkdir -p "dist/${NAME}/lib"
+          cp update-my-mac.sh README.md CHANGELOG.md LICENSE "dist/${NAME}/"
+          cp lib/cooldown.py "dist/${NAME}/lib/"
+          tar -czf "dist/${NAME}.tar.gz" -C dist "${NAME}"
+          # Stable asset name for the one-line installer:
+          # https://github.com/<repo>/releases/latest/download/update-my-mac.tar.gz
+          cp "dist/${NAME}.tar.gz" dist/update-my-mac.tar.gz
+          ( cd dist && sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256" \
+                    && sha256sum update-my-mac.tar.gz > update-my-mac.tar.gz.sha256 )
+          tar -tzf "dist/${NAME}.tar.gz"
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -102,5 +135,9 @@ jobs:
           name: Release ${{ steps.version.outputs.version }}
           body_path: release_notes.md
           files: |
-            update-my-mac.sh
+            dist/update-my-mac-${{ steps.version.outputs.version }}.tar.gz
+            dist/update-my-mac-${{ steps.version.outputs.version }}.tar.gz.sha256
+            dist/update-my-mac.tar.gz
+            dist/update-my-mac.tar.gz.sha256
+            install.sh
             CHANGELOG.md
