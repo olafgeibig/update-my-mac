@@ -1,3 +1,13 @@
+## Release v2026.11.11
+
+**Date**: 2026-11-11
+
+### Changes
+
+- ci(release): make releases manual, fix changelog generation (a0c38ab)
+- Merge branch 'main' of github.com:olafgeibig/update-my-mac (fa13b9b)
+- Added cooldown period (0aaac4f)
+
 ## Release v2026.01.07
 
 **Date**: 2026-01-07
