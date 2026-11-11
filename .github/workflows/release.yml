@@ -1,9 +1,8 @@
 name: Release
 
 on:
-  push:
-    branches:
-      - main
+  # Manual only: a release must be a deliberate act, not a side effect of every
+  # push to main. Run it from Actions -> Release -> Run workflow.
   workflow_dispatch:
 
 permissions:
@@ -41,6 +40,9 @@ jobs:
 
       - name: Generate Changelog
         id: changelog
+        env:
+          # The calculated version is a step output, not a shell variable.
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           # Determine the previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
@@ -63,8 +65,10 @@ jobs:
             git log --pretty=format:"- %s (%h)" "$PREV_TAG"..HEAD >> release_notes.md
           fi
           
-          echo "" >> release_notes.md
-          
+          # Blank line before the next entry: git log --pretty=format: leaves no
+          # trailing newline, so the last bullet needs terminating + one blank.
+          printf '\n\n' >> release_notes.md
+
           # Append to main CHANGELOG.md (prepend actually)
           if [ -f CHANGELOG.md ]; then
             cat release_notes.md CHANGELOG.md > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md

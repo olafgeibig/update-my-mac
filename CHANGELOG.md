@@ -1,4 +1,4 @@
-## Release 
+## Release v2026.01.07
 
 **Date**: 2026-01-07
 
@@ -9,7 +9,8 @@
 - feat: added quickck and full update profiles (9f11d42)
 - Add update profiles (quick/full) for more convenient updates (ebe29bc)
 - feat: now clearing agent caches (f478409)
-## Release 
+
+## Release v2026.01.06
 
 **Date**: 2026-01-06
 
