@@ -11,6 +11,10 @@ plan    classify pending Homebrew upgrades and write an eligible-targets list
 status  show the configured cooldown per package manager and whether it is effective
 sync    derive every per-tool value from one threshold in hours
 
+Statuses: eligible, held (inside the age window), unknown (date not established,
+held), bypass (explicit exception), sudo (age-eligible but needs root - deferred
+to `update-my-mac --sudo-batch`, never upgraded unattended).
+
 Exit codes (plan)
 -----------------
 0  plan computed normally
@@ -41,12 +45,21 @@ COOLDOWN_ENV = os.path.expanduser("~/.config/cooldown/cooldown.env")
 # --------------------------------------------------------------------------- utils
 
 
-def run(cmd: list[str] | str, shell: bool = False, timeout: int = 120) -> tuple[int, str, str]:
+def run(
+    cmd: list[str] | str,
+    shell: bool = False,
+    timeout: int = 120,
+    env: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
     """Run a command; return (returncode, stdout, stderr) as separate streams.
 
     Never merge the two: brew writes deprecation warnings to stderr, and gluing
     them onto stdout turns valid JSON into unparsable text.
     """
+    full_env = None
+    if env:
+        full_env = dict(os.environ)
+        full_env.update(env)
     try:
         p = subprocess.run(
             cmd,
@@ -54,10 +67,17 @@ def run(cmd: list[str] | str, shell: bool = False, timeout: int = 120) -> tuple[
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=full_env,
         )
         return p.returncode, p.stdout or "", p.stderr or ""
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
         return 127, "", str(exc)
+
+
+# brew may run auto-update even for read-only commands and print its banners on
+# *stdout*, corrupting --json output. The gate's brew calls must never trigger
+# that (nor env hints inside the JSON).
+BREW_READONLY_ENV = {"HOMEBREW_NO_AUTO_UPDATE": "1", "HOMEBREW_NO_ENV_HINTS": "1"}
 
 
 def load_cache() -> dict:
@@ -77,11 +97,16 @@ def save_cache(cache: dict) -> None:
     os.replace(tmp, CACHE_PATH)
 
 
-def run_retry(cmd: list[str], timeout: int = 300, attempts: int = 2) -> tuple[int, str, str]:
+def run_retry(
+    cmd: list[str],
+    timeout: int = 300,
+    attempts: int = 2,
+    env: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
     """brew occasionally fails transiently (lock held by a concurrent auto-update)."""
     rc, out, err = 1, "", ""
     for attempt in range(attempts):
-        rc, out, err = run(cmd, timeout=timeout)
+        rc, out, err = run(cmd, timeout=timeout, env=env)
         if rc == 0:
             return rc, out, err
         if attempt + 1 < attempts:
@@ -115,14 +140,15 @@ def human_age(hours: float) -> str:
 
 
 def brew_outdated() -> tuple[int, list[dict]]:
-    rc, out, err = run_retry(["brew", "outdated", "--json=v2"])
+    rc, out, err = run_retry(["brew", "outdated", "--json=v2"], env=BREW_READONLY_ENV)
     if rc != 0:
         sys.stderr.write(
             f"brew outdated failed (rc={rc}): {(err or out).strip()[:600]}\n"
         )
         return rc, []
     try:
-        data = json.loads(out)
+        # strict=False: cask descriptions can contain raw control characters.
+        data = json.loads(out, strict=False)
     except ValueError as exc:
         sys.stderr.write(f"brew outdated returned unparsable JSON: {exc}\n")
         return 2, []
@@ -160,12 +186,14 @@ def brew_info(items: list[dict]) -> tuple[int, dict[str, dict]]:
         names = [i["name"] for i in items if i["kind"] == kind]
         if not names:
             continue
-        rc, out, err = run_retry(["brew", "info", "--json=v2", flag, *names])
+        rc, out, err = run_retry(
+            ["brew", "info", "--json=v2", flag, *names], env=BREW_READONLY_ENV
+        )
         if rc != 0:
             rc_any = rc
             continue
         try:
-            data = json.loads(out)
+            data = json.loads(out, strict=False)
         except ValueError:
             rc_any = 2
             continue
@@ -187,6 +215,10 @@ def brew_info(items: list[dict]) -> tuple[int, dict[str, dict]]:
                 "path": entry.get("ruby_source_path") or "",
                 "tap": entry.get("tap") or "",
                 "deps": entry.get("dependencies") or [],
+                # casks only: artifact list decides whether an upgrade needs sudo.
+                # Keep None (absent) distinct from [] (present, empty) so the
+                # classifier can fail closed on missing metadata.
+                "artifacts": entry.get("artifacts") if kind == "cask" else None,
             }
             for key_name in keys:
                 meta[key_name] = record
@@ -316,6 +348,80 @@ def threshold_for(item: dict, hours: float, hours_core: float) -> float:
     return hours
 
 
+# Artifact types whose install/uninstall path invokes sudo. Verified against
+# Homebrew 7.0.12 sources (cask/artifact/*.rb, services/system.rb):
+#   pkg, keyboard_layout, suite  -> requires_sudo? == true
+#   installer                    -> sudo when declared (manual is interactive anyway)
+#   uninstall pkgutil / kext     -> always sudo
+#   uninstall delete             -> rm with sudo: true, unconditional
+#   uninstall script             -> sudo when declared
+#   uninstall launchctl          -> probes `launchctl print system/<label>` via
+#                                   sudo even when no system daemon exists, so
+#                                   ANY launchctl stanza means a sudo call.
+# quit/signal/trash and plain app/binary artifacts never sudo.
+SUDO_INSTALL_ARTIFACTS = {"pkg", "installer", "keyboard_layout", "suite"}
+SUDO_UNINSTALL_DIRECTIVES = {"pkgutil", "kext", "launchctl", "delete", "script"}
+
+
+def sudo_reasons(kind: str, artifacts: list | None) -> list[str]:
+    """Why upgrading this package would invoke sudo ([] = sudo-free).
+
+    Formulae never need sudo (brew refuses to run as root). For casks the
+    artifact list from `brew info --json=v2` decides; missing metadata fails
+    closed (deferred rather than risking an unattended prompt).
+    """
+    if kind != "cask":
+        return []
+    if artifacts is None:
+        return ["cask artifacts unknown"]
+    reasons: list[str] = []
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue  # bare strings are app/binary targets - sudo-free
+        for key, value in artifact.items():
+            if key in SUDO_INSTALL_ARTIFACTS:
+                reasons.append(f"{key} installer")
+            elif key == "uninstall" and isinstance(value, list):
+                for directive in value:
+                    if isinstance(directive, dict):
+                        for name in directive:
+                            if name in SUDO_UNINSTALL_DIRECTIVES:
+                                reasons.append(f"uninstall {name}")
+    # dedupe, keep order
+    return list(dict.fromkeys(reasons))
+
+
+def plan_status(
+    name: str,
+    kind: str,
+    ts: float | None,
+    age: float | None,
+    limit: float,
+    bypass: set[str],
+    artifacts: list | None,
+) -> tuple[str, str]:
+    """One package's classification. Order: bypass > unknown date > age > sudo.
+
+    `sudo` means age-eligible but root-requiring: deferred to `--sudo-batch`,
+    never upgraded unattended. --bypass overrides the age window, not the sudo
+    deferral (a bypassed sudo cask is deferred too and joins the batch).
+    """
+    was_bypass = name in bypass
+    if was_bypass:
+        status, reason = "bypass", "explicit bypass"
+    elif ts is None:
+        return "unknown", "release date unknown"
+    elif age is not None and age >= limit:
+        status, reason = "eligible", ""
+    else:
+        return "held", ""
+    reasons = sudo_reasons(kind, artifacts)
+    if reasons:
+        prefix = "explicit bypass; " if was_bypass else ""
+        return "sudo", prefix + ", ".join(reasons)
+    return status, reason
+
+
 def cmd_plan(args: argparse.Namespace) -> int:
     hours = float(args.hours)
     hours_core = float(args.hours_core) if args.hours_core is not None else hours
@@ -344,14 +450,18 @@ def cmd_plan(args: argparse.Namespace) -> int:
         ts = info.get("date")
         age = (now - ts) / 3600 if ts else None
         limit = threshold_for(item, hours, hours_core)
-        if item["name"] in bypass:
-            status, reason = "bypass", "explicit bypass"
-        elif ts is None:
-            status, reason = "unknown", info.get("error") or "release date unknown"
-        elif age is not None and age >= limit:
-            status, reason = "eligible", ""
-        else:
-            status, reason = "held", ""
+        item_meta = meta.get(item["name"]) or {}
+        status, reason = plan_status(
+            item["name"],
+            item["kind"],
+            ts,
+            age,
+            limit,
+            bypass,
+            item_meta.get("artifacts"),
+        )
+        if status == "unknown":
+            reason = info.get("error") or reason
         plan_items.append(
             {
                 **item,
@@ -365,7 +475,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
                 "status": status,
                 "reason": reason,
                 "source": info.get("source", "none"),
-                "deps": (meta.get(item["name"]) or {}).get("deps", []),
+                "deps": item_meta.get("deps", []),
             }
         )
 
@@ -408,6 +518,7 @@ def _write_plan(
     info_count: int,
 ) -> None:
     eligible = sorted(i["name"] for i in items if i["status"] in ("eligible", "bypass"))
+    sudo_deferred = sorted(i["name"] for i in items if i["status"] == "sudo")
     if args.json_out:
         os.makedirs(os.path.dirname(args.json_out), exist_ok=True)
         with open(args.json_out, "w", encoding="utf-8") as fh:
@@ -419,7 +530,7 @@ def _write_plan(
                     "lookup_failures": failed,
                     "counts": {
                         s: sum(1 for i in items if i["status"] == s)
-                        for s in ("eligible", "held", "bypass", "unknown")
+                        for s in ("eligible", "held", "bypass", "unknown", "sudo")
                     },
                     "items": items,
                 },
@@ -430,17 +541,22 @@ def _write_plan(
         os.makedirs(os.path.dirname(args.eligible_out), exist_ok=True)
         with open(args.eligible_out, "w", encoding="utf-8") as fh:
             fh.write("\n".join(eligible) + ("\n" if eligible else ""))
+    if args.sudo_out:
+        os.makedirs(os.path.dirname(args.sudo_out), exist_ok=True)
+        with open(args.sudo_out, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(sudo_deferred) + ("\n" if sudo_deferred else ""))
 
 
 def _print_report(hours: float, hours_core: float, items: list[dict]) -> None:
     def bucket(status: str) -> list[dict]:
         return [i for i in items if i["status"] == status]
 
-    eligible, held, unknown, bypass = (
+    eligible, held, unknown, bypass, sudo_deferred = (
         bucket("eligible"),
         bucket("held"),
         bucket("unknown"),
         bucket("bypass"),
+        bucket("sudo"),
     )
     if hours_core != hours:
         print(f"Cooldown {hours:g}h (homebrew-core {hours_core:g}h) - Homebrew plan")
@@ -449,11 +565,19 @@ def _print_report(hours: float, hours_core: float, items: list[dict]) -> None:
     print(f"  outdated : {len(items)}")
     print(f"  eligible : {len(eligible)}")
     print(f"  held     : {len(held)}")
+    if sudo_deferred:
+        print(f"  sudo     : {len(sudo_deferred)}  (deferred - needs root, run: update-my-mac --sudo-batch)")
     if bypass:
         print(f"  bypassed : {len(bypass)}")
     if unknown:
         print(f"  unknown  : {len(unknown)}  (held - release date not established)")
     print()
+
+    if sudo_deferred:
+        print(f"Deferred, needs sudo ({len(sudo_deferred)}) - install together with: update-my-mac --sudo-batch")
+        for item in sorted(sudo_deferred, key=lambda i: i["name"]):
+            print(f"  {item['name']:<24} {item['kind']:<8} {item['current']:<18} {item['reason']}")
+        print()
 
     if bypass:
         print("Bypassed for this run:")
@@ -777,6 +901,52 @@ def cmd_selftest(_args: argparse.Namespace) -> int:
     check("1.99.0 < 1.100.0", not _version_ge("1.99.0", "1.100.0"))
     check("1.100.0 >= 1.100.0", _version_ge("1.100.0", "1.100.0"))
 
+    # sudo classifier: artifact shapes as `brew info --json=v2` emits them
+    app_only = ["Ghostty.app", {"uninstall": [{"quit": "com.mitchellh.ghostty"}]}]
+    pkg_cask = [{"pkg": "NAPS2.pkg"}, {"uninstall": [{"pkgutil": "com.naps2.pkg"}]}]
+    launchctl_cask = [
+        "Visual Studio Code.app",
+        {"uninstall": [{"launchctl": "com.microsoft.VSCode.ShipIt"}, {"quit": "com.microsoft.VSCode"}]},
+    ]
+    check("app-only cask is sudo-free", sudo_reasons("cask", app_only) == [])
+    check("pkg cask needs sudo", "pkg installer" in sudo_reasons("cask", pkg_cask))
+    check("pkgutil uninstall needs sudo", "uninstall pkgutil" in sudo_reasons("cask", pkg_cask))
+    check(
+        "launchctl uninstall needs sudo (brew probes via sudo)",
+        sudo_reasons("cask", launchctl_cask) == ["uninstall launchctl"],
+    )
+    check("kext uninstall needs sudo", sudo_reasons("cask", [{"uninstall": [{"kext": "x.kext"}]}]) != [])
+    check("delete uninstall needs sudo", sudo_reasons("cask", [{"uninstall": [{"delete": "/Library/x"}]}]) != [])
+    check("formula never needs sudo", sudo_reasons("formula", pkg_cask) == [])
+    check("missing cask artifacts fail closed", sudo_reasons("cask", None) != [])
+    check("empty artifact list is sudo-free", sudo_reasons("cask", []) == [])
+
+    # classification precedence: bypass > unknown date > age window > sudo
+    old = 1000.0  # age in hours, well past any window
+    check(
+        "age-eligible sudo cask is deferred",
+        plan_status("x", "cask", 1.0, old, 72, set(), pkg_cask)[0] == "sudo",
+    )
+    check(
+        "age-eligible app cask stays eligible",
+        plan_status("x", "cask", 1.0, old, 72, set(), app_only)[0] == "eligible",
+    )
+    check(
+        "young sudo cask is held by age, not sudo",
+        plan_status("x", "cask", 1.0, 1.0, 72, set(), pkg_cask)[0] == "held",
+    )
+    check(
+        "unknown date wins over sudo",
+        plan_status("x", "cask", None, None, 72, set(), pkg_cask)[0] == "unknown",
+    )
+    bypass_status, bypass_reason = plan_status("x", "cask", 1.0, old, 72, {"x"}, pkg_cask)
+    check("bypass overrides age but not sudo deferral", bypass_status == "sudo")
+    check("bypassed sudo reason keeps the bypass note", "explicit bypass" in bypass_reason)
+    check(
+        "bypassed sudo-free cask upgrades now",
+        plan_status("x", "cask", 1.0, 1.0, 72, {"x"}, app_only)[0] == "bypass",
+    )
+
     print(f"\n{'all checks passed' if failures == 0 else f'{failures} check(s) failed'}")
     return 0 if failures == 0 else 1
 
@@ -796,6 +966,11 @@ def main(argv: list[str]) -> int:
     p_plan.add_argument("--bypass", default="", help="comma-separated package names")
     p_plan.add_argument("--json-out", default="")
     p_plan.add_argument("--eligible-out", default="")
+    p_plan.add_argument(
+        "--sudo-out",
+        default="",
+        help="write the names of age-eligible but sudo-requiring packages here",
+    )
     p_plan.add_argument("--no-cache", action="store_true")
     p_plan.set_defaults(func=cmd_plan)
 

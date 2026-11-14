@@ -28,6 +28,10 @@ NC='\033[0m' # No Color
 #
 # Change the threshold in one place only: ~/.config/cooldown/cooldown.env
 # Then run: update-my-mac --cooldown-sync
+#
+# Upgrades that need root (pkg installers, launchctl/kext/pkgutil/delete
+# uninstalls) are deferred instead of prompting: they show up in the report
+# and are installed together via --sudo-batch with a single sudo authentication.
 # ---------------------------------------------------------------------------
 COOLDOWN_CONFIG="${COOLDOWN_CONFIG:-$HOME/.config/cooldown/cooldown.env}"
 if [[ -r "$COOLDOWN_CONFIG" ]]; then
@@ -49,6 +53,11 @@ SELF="$0"
 SCRIPT_DIR="${0:A:h}"
 COOLDOWN_HELPER="${UPDATE_MY_MAC_HELPER:-$SCRIPT_DIR/lib/cooldown.py}"
 
+# Askpass stub for unattended runs: brew calls `sudo -A` when SUDO_ASKPASS is
+# set, so this makes any unexpected sudo fail fast instead of prompting.
+# The batch mode (--sudo-batch) deliberately does NOT use it.
+SUDO_ASKPASS_DEFER="$SCRIPT_DIR/lib/sudo-askpass-defer.sh"
+
 # ---------------------------------------------------------------------------
 # Installation layout
 #
@@ -59,6 +68,7 @@ COOLDOWN_HELPER="${UPDATE_MY_MAC_HELPER:-$SCRIPT_DIR/lib/cooldown.py}"
 #
 #   /usr/local/libexec/update-my-mac/update-my-mac.sh
 #   /usr/local/libexec/update-my-mac/lib/cooldown.py
+#   /usr/local/libexec/update-my-mac/lib/sudo-askpass-defer.sh
 #   /usr/local/bin/update-my-mac -> ../libexec/update-my-mac/update-my-mac.sh
 #
 # Override the prefix with UPDATE_MY_MAC_PREFIX (e.g. for a $HOME-only install).
@@ -169,7 +179,9 @@ log_command() {
         fi
     done
     
-    local exit_code=${PIPESTATUS[0]}
+    # zsh: lowercase $pipestatus, 1-indexed. (Bash's ${PIPESTATUS[0]} is always
+    # empty here, which silently turned every command into a success.)
+    local exit_code=${pipestatus[1]}
     local duration=$((SECONDS - start_time))
     
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [EXIT] $cmd exited with code: ${exit_code:-0} (duration: ${duration}s)" | tee -a "$LOG_FILE" 2>/dev/null
@@ -237,6 +249,7 @@ update_brew() {
     local stamp=$(date +%Y%m%d_%H%M%S)
     local plan_json="$LOG_DIR/brew-cooldown-$stamp.json"
     local eligible_txt="$LOG_DIR/brew-eligible-$stamp.txt"
+    local sudo_txt="$LOG_DIR/brew-sudo-$stamp.txt"
     local -a bypass_args
     if [[ -n "$COOLDOWN_BYPASS" ]]; then
         bypass_args=(--bypass "$COOLDOWN_BYPASS")
@@ -250,7 +263,8 @@ update_brew() {
         --hours-core "$COOLDOWN_HOURS_CORE" \
         "${bypass_args[@]}" \
         --json-out "$plan_json" \
-        --eligible-out "$eligible_txt"
+        --eligible-out "$eligible_txt" \
+        --sudo-out "$sudo_txt"
     local gate_rc=$?
 
     # fail closed: if the gate cannot be evaluated, upgrade nothing
@@ -265,10 +279,34 @@ update_brew() {
     eligible=("${(@f)$(<"$eligible_txt")}")
     eligible=(${eligible:#})
 
+    local -a sudo_deferred
+    sudo_deferred=("${(@f)$(<"$sudo_txt")}")
+    sudo_deferred=(${sudo_deferred:#})
+    if (( ${#sudo_deferred} > 0 )); then
+        print_warning "${#sudo_deferred} package(s) need sudo and were deferred: ${sudo_deferred[*]}"
+        print_warning "Install them together with one password prompt: $SELF --sudo-batch"
+    fi
+
     if (( ${#eligible} == 0 )); then
         print_warning "Nothing past the ${COOLDOWN_HOURS}h cooldown window - Homebrew left untouched"
     else
-        log_command "brew upgrade ${(j: :)eligible}" "Upgrading ${#eligible} package(s) older than ${COOLDOWN_HOURS}h..."
+        # Safety net for anything the gate misclassified: with SUDO_ASKPASS set,
+        # brew calls `sudo -A`, the stub exits 1, and sudo fails fast instead of
+        # prompting. The stub contains no secrets and reads nothing.
+        local askpass_prefix=""
+        if [[ -x "$SUDO_ASKPASS_DEFER" ]]; then
+            askpass_prefix="SUDO_ASKPASS='$SUDO_ASKPASS_DEFER' "
+        else
+            print_warning "Askpass guard missing ($SUDO_ASKPASS_DEFER) - an unexpected sudo could prompt"
+        fi
+        local upgrade_rc=0
+        log_command "${askpass_prefix}brew upgrade ${(j: :)eligible}" "Upgrading ${#eligible} package(s) older than ${COOLDOWN_HOURS}h..." || upgrade_rc=$?
+        if (( upgrade_rc != 0 )); then
+            print_error "brew upgrade exited with code $upgrade_rc"
+            if [[ -f "$LOG_FILE" ]] && grep -Fq "sudo required - deferred" "$LOG_FILE"; then
+                print_warning "An upgrade needed sudo unexpectedly - install it with: $SELF --sudo-batch"
+            fi
+        fi
     fi
 
     # Keep a 30-day rollback window instead of deleting every previous version
@@ -598,6 +636,124 @@ cooldown_report() {
     return 0
 }
 
+# ---------------------------------------------------------------------------
+# sudo batch: install the deferred, root-requiring upgrades in one go.
+# The password is typed into sudo's own tty prompt - this script never reads,
+# stores, logs or forwards it. See docs/sudo-batch.md.
+# ---------------------------------------------------------------------------
+SUDO_BATCH_KEEPALIVE_PID=""
+sudo_batch_cleanup() {
+    if [[ -n "$SUDO_BATCH_KEEPALIVE_PID" ]]; then
+        kill "$SUDO_BATCH_KEEPALIVE_PID" 2>/dev/null
+        wait "$SUDO_BATCH_KEEPALIVE_PID" 2>/dev/null
+        SUDO_BATCH_KEEPALIVE_PID=""
+    fi
+    sudo -k 2>/dev/null   # close the root window as soon as the batch ends
+}
+
+sudo_batch() {
+    print_header "Homebrew sudo batch (deferred upgrades)"
+
+    if ! command -v brew &> /dev/null; then
+        print_error "Homebrew is not installed"
+        return 1
+    fi
+    if [[ ! -t 0 || ! -t 1 ]]; then
+        print_error "--sudo-batch needs an interactive terminal (sudo prompts on the tty)"
+        return 1
+    fi
+    if [[ ! -f "$COOLDOWN_HELPER" ]]; then
+        print_error "Cooldown helper not found at $COOLDOWN_HELPER - refusing to upgrade unfiltered"
+        return 2
+    fi
+
+    if [[ "$COOLDOWN_ENFORCE" == "0" ]]; then
+        print_warning "COOLDOWN DISABLED for this run - the batch still only installs the deferred names"
+    fi
+
+    log_command "brew update" "Updating Homebrew..."
+
+    # Re-derive the batch from a fresh gate plan, never from a stale file:
+    # versions may have changed since the last run.
+    local stamp=$(date +%Y%m%d_%H%M%S)
+    local plan_json="$LOG_DIR/brew-cooldown-$stamp.json"
+    local sudo_txt="$LOG_DIR/brew-sudo-$stamp.txt"
+    local -a bypass_args
+    if [[ -n "$COOLDOWN_BYPASS" ]]; then
+        bypass_args=(--bypass "$COOLDOWN_BYPASS")
+    else
+        bypass_args=()
+    fi
+
+    print_header "Evaluating cooldown gate"
+    python3 "$COOLDOWN_HELPER" plan \
+        --hours "$COOLDOWN_HOURS" \
+        --hours-core "$COOLDOWN_HOURS_CORE" \
+        "${bypass_args[@]}" \
+        --json-out "$plan_json" \
+        --sudo-out "$sudo_txt"
+    local gate_rc=$?
+    if (( gate_rc == 2 )); then
+        print_error "Cooldown gate could not evaluate Homebrew state - no packages upgraded"
+        return 2
+    elif (( gate_rc == 3 )); then
+        print_warning "Some release dates are unknown - those packages were held back"
+    fi
+
+    local -a deferred
+    deferred=("${(@f)$(<"$sudo_txt")}")
+    deferred=(${deferred:#})
+
+    if (( ${#deferred} == 0 )); then
+        print_success "Nothing is deferred for sudo - no batch needed"
+        return 0
+    fi
+
+    echo "Batch targets (${#deferred}): ${deferred[*]}"
+    echo "sudo asks for your password once, directly on the terminal."
+    echo "This script never sees, stores or logs it."
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        echo "[DRY RUN] would execute: sudo -v"
+        echo "[DRY RUN] would execute: brew upgrade ${deferred[*]}"
+        return 0
+    fi
+
+    # The batch must prompt on the tty; a global SUDO_ASKPASS would divert that.
+    unset SUDO_ASKPASS
+
+    sudo -v || { print_error "sudo authentication failed"; return 1; }
+    if ! sudo -n true 2>/dev/null; then
+        print_warning "sudo is not caching credentials (timestamp_timeout=0?) - expect repeated prompts"
+    fi
+
+    # Keep the ticket alive across long downloads: refresh well inside the
+    # default 5-minute timeout. Only `sudo -n true` runs here - never a password.
+    ( while :; do sudo -n true 2>/dev/null; sleep 50; done ) &
+    SUDO_BATCH_KEEPALIVE_PID=$!
+    trap 'sudo_batch_cleanup; exit 130' INT TERM
+
+    # brew's sudo probe resets the timestamp once per process (utils/sudo.sh);
+    # telling it the check already happened preserves our `sudo -v` ticket.
+    # Brew-internal, verified on 7.0.12: if a future brew ignores it, the worst
+    # case is one extra prompt, never a hang.
+    export HOMEBREW_SUDO_CHECKED=1
+
+    local batch_rc=0
+    log_command "brew upgrade ${deferred[*]}" "sudo batch: upgrading ${#deferred} deferred package(s)..." || batch_rc=$?
+
+    sudo_batch_cleanup
+    trap - INT TERM
+    unset HOMEBREW_SUDO_CHECKED
+
+    if (( batch_rc == 0 )); then
+        print_success "sudo batch completed (gate: $plan_json)"
+    else
+        print_error "sudo batch exited with code $batch_rc - see $LOG_FILE"
+    fi
+    return $batch_rc
+}
+
 # Run a command with sudo only when the install prefix is not writable by us
 install_priv() {
     local probe="$INSTALL_PREFIX"
@@ -647,6 +803,7 @@ install_script() {
 
     local source_script="$SCRIPT_DIR/update-my-mac.sh"
     local source_lib="$SCRIPT_DIR/lib/cooldown.py"
+    local source_askpass="$SCRIPT_DIR/lib/sudo-askpass-defer.sh"
 
     if [[ ! -f "$source_script" ]]; then
         print_error "Source script not found at $source_script"
@@ -657,6 +814,12 @@ install_script() {
         print_warning "Refusing to install an incomplete tree - without lib/cooldown.py the"
         print_warning "Homebrew gate cannot run and no brew package would ever be upgraded."
         print_warning "Run this from the repository checkout, not from an old flat install."
+        return 1
+    fi
+    if [[ ! -f "$source_askpass" ]]; then
+        print_error "Askpass guard not found at $source_askpass"
+        print_warning "Refusing to install an incomplete tree - without it an unexpected"
+        print_warning "sudo during an unattended run could prompt for a password."
         return 1
     fi
 
@@ -687,8 +850,12 @@ install_script() {
     if [[ "${source_lib:A}" != "${INSTALL_LIBDIR:A}/lib/cooldown.py" ]]; then
         install_priv cp "$source_lib" "$INSTALL_LIBDIR/lib/cooldown.py" || return 1
     fi
+    if [[ "${source_askpass:A}" != "${INSTALL_LIBDIR:A}/lib/sudo-askpass-defer.sh" ]]; then
+        install_priv cp "$source_askpass" "$INSTALL_LIBDIR/lib/sudo-askpass-defer.sh" || return 1
+    fi
     install_priv chmod 755 "$INSTALL_LIBDIR/update-my-mac.sh" || return 1
     install_priv chmod 644 "$INSTALL_LIBDIR/lib/cooldown.py" || return 1
+    install_priv chmod 755 "$INSTALL_LIBDIR/lib/sudo-askpass-defer.sh" || return 1
 
     echo "Linking $INSTALL_BIN ..."
     install_priv mkdir -p "$INSTALL_PREFIX/bin" || return 1
@@ -710,7 +877,7 @@ install_script() {
 
     print_success "Installed $VERSION"
     echo "  $INSTALL_BIN -> $INSTALL_LINK_TARGET"
-    echo "  lib/cooldown.py deployed alongside the script"
+    echo "  lib/cooldown.py + lib/sudo-askpass-defer.sh deployed alongside the script"
     echo "Run: update-my-mac --version   (shows version, helper and install path)"
 }
 
@@ -777,6 +944,7 @@ show_help() {
     echo "  --report          Show what would update, what is held and why (no changes)"
     echo "  --cooldown-status Show the effective cooldown setting per package manager"
     echo "  --cooldown-sync   Re-derive all per-tool configs from COOLDOWN_HOURS"
+    echo "  --sudo-batch      Install the sudo-deferred upgrades in one batch (one password prompt)"
     echo "  --bypass PKG[,PKG] One-off exception, this run only (not persisted, logged):
                        with --brew: exempt the named packages from the gate
                        with --uv:   upgrade exactly these tools with UV_EXCLUDE_NEWER=false
@@ -788,7 +956,7 @@ show_help() {
     echo ""
     echo "Installation:"
     echo "  --install    Deploy $INSTALL_BIN"
-    echo "               (tree in $INSTALL_LIBDIR, script + lib/cooldown.py)"
+    echo "               (tree in $INSTALL_LIBDIR, script + lib/cooldown.py + lib/sudo-askpass-defer.sh)"
     echo "  --uninstall  Remove the installed tree (keeps logs and cooldown cache)"
     echo "  --version    Version, cooldown helper state and install path"
     echo "  --help       Display this help message"
@@ -871,6 +1039,9 @@ while [ $# -gt 0 ]; do
             ;;
         --cooldown-sync)
             cooldown_sync
+            ;;
+        --sudo-batch)
+            sudo_batch || exit $?
             ;;
         --bypass)
             shift   # value consumed by the pre-scan above

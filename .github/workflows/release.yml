@@ -106,6 +106,7 @@ jobs:
           # upgrade anything, so fail here instead of in the field.
           test -f update-my-mac.sh || { echo "update-my-mac.sh missing"; exit 1; }
           test -f lib/cooldown.py || { echo "lib/cooldown.py missing - cannot package"; exit 1; }
+          test -f lib/sudo-askpass-defer.sh || { echo "lib/sudo-askpass-defer.sh missing - cannot package"; exit 1; }
           python3 - "$PWD" <<'PY'
           import ast, pathlib, sys
           root = pathlib.Path(sys.argv[1])
@@ -123,7 +124,8 @@ jobs:
           NAME="update-my-mac-${VERSION}"
           mkdir -p "dist/${NAME}/lib"
           cp update-my-mac.sh README.md CHANGELOG.md LICENSE "dist/${NAME}/"
-          cp lib/cooldown.py "dist/${NAME}/lib/"
+          cp lib/cooldown.py lib/sudo-askpass-defer.sh "dist/${NAME}/lib/"
+          chmod +x "dist/${NAME}/lib/sudo-askpass-defer.sh"
           tar -czf "dist/${NAME}.tar.gz" -C dist "${NAME}"
           # Stable asset name for the one-line installer:
           # https://github.com/<repo>/releases/latest/download/update-my-mac.tar.gz

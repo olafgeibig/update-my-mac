@@ -15,8 +15,8 @@
 #   UPDATE_MY_MAC_PREFIX    install prefix, default /usr/local
 #   UPDATE_MY_MAC_TARBALL   install from a local .tar.gz instead of GitHub
 #
-# The script installs a tree (script + lib/cooldown.py) and a symlink, not a
-# single file - see update-my-mac.sh --install.
+# The script installs a tree (script + lib/cooldown.py + lib/sudo-askpass-defer.sh)
+# and a symlink, not a single file - see update-my-mac.sh --install.
 
 set -euo pipefail
 
@@ -108,6 +108,8 @@ SRC="$EXTRACT/$root_name"
     || die "unexpected tarball layout: no update-my-mac.sh in $root_name"
 [[ -f "$SRC/lib/cooldown.py" ]] \
     || die "tarball lacks lib/cooldown.py - it cannot install a working tree"
+[[ -f "$SRC/lib/sudo-askpass-defer.sh" ]] \
+    || die "tarball lacks lib/sudo-askpass-defer.sh - it cannot install a working tree"
 
 chmod +x "$SRC/update-my-mac.sh"
 
