@@ -1,3 +1,13 @@
+## Release v2026.11.14
+
+**Date**: 2026-11-14
+
+### Changes
+
+- docs: document sudo deferral and the single-password batch (b4de673)
+- feat(brew): defer sudo-requiring cask upgrades, add single-password --sudo-batch (882b243)
+- docs: point install examples at released tag v2026.11.11 (cfd76ef)
+
 ## Release v2026.11.11
 
 **Date**: 2026-11-11
