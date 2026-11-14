@@ -43,7 +43,13 @@ For every package in `brew outdated --json=v2`:
 | `held` | younger than its window | no |
 | `held` | pulls a dependency that is itself held | no |
 | `unknown` | merge date could not be established | **no** (fail closed) |
-| `bypass` | named on the command line with `--bypass` | yes, regardless of age |
+| `sudo` | age-eligible, but the upgrade needs root | **no** — deferred to `--sudo-batch` |
+| `bypass` | named on the command line with `--bypass` | yes, regardless of age (root-requiring casks stay deferred) |
+
+The `sudo` classification is artifact-based (`pkg` installers, `launchctl`,
+`pkgutil`, `kext`, `delete`, `script` uninstalls); missing artifact metadata
+fails closed. `--bypass` overrides the age window, not the sudo deferral.
+Details and the single-password batch: [`sudo-batch.md`](sudo-batch.md).
 
 ## The dependency rule
 
@@ -82,10 +88,10 @@ holds its lock. Two failures in a row are treated as a real failure.
 
 ## Known limits
 
-- **Casks that need sudo** (`pkg`, `installer`, `kext`, `uninstall` stanzas) cannot be
-  upgraded from a non-interactive run — they fail with
-  `sudo: a terminal is required to read the password` and stay pending. Run those from a
-  real terminal, or accept that they always show up as pending in cron/agent runs.
+- **Casks that need sudo** are deferred, not upgraded, in unattended runs and
+  installed together via `--sudo-batch` (one password prompt). The classifier
+  is artifact-based; an unexpected sudo attempt fails fast through the askpass
+  guard instead of prompting. See [`sudo-batch.md`](sudo-batch.md).
 - **Bottle and revision rebuilds** (`formula: update 1.25.0_2 bottle`) move the commit
   date, so a rebuild of an old version is held like a new version. Conservative and
   correct: the artifact is new.
@@ -106,7 +112,7 @@ Every gated run writes `~/Library/Logs/update-my-mac/brew-cooldown-<stamp>.json`
 {
   "cooldown_hours": 72,
   "cooldown_hours_core": 24,
-  "counts": {"eligible": 13, "held": 24, "bypass": 0, "unknown": 0},
+  "counts": {"eligible": 13, "held": 24, "bypass": 0, "unknown": 0, "sudo": 6},
   "items": [
     {"name": "gh", "kind": "formula", "current": "2.103.1", "tap": "homebrew/core",
      "age_hours": 2.1, "threshold": 24, "status": "held", "deps": ["..."],

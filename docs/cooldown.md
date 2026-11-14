@@ -94,6 +94,10 @@ under `~/Library/Logs/update-my-mac/brew-cooldown-*.json` with
 dependency rule below — that is the point of forcing it. `--bun` ignores `--bypass`
 (bun gates resolution itself); use `bun add -g <pkg>@<version>` for an exact version.
 
+With `--brew`, `--bypass` overrides the age window but **not** the sudo deferral: a
+bypassed cask that needs root is still deferred and installed via `--sudo-batch`
+([`sudo-batch.md`](sudo-batch.md)).
+
 Permanent exemptions belong in the manager's own config, each with a date and a reason:
 
 | Manager | Key |
@@ -129,4 +133,5 @@ substitutes.
 ## Related
 
 - [`homebrew-gate.md`](homebrew-gate.md) — how the Homebrew gate is implemented
+- [`sudo-batch.md`](sudo-batch.md) — root-requiring casks: deferral and the single-password batch
 - [`operations.md`](operations.md) — logs, troubleshooting, emergencies

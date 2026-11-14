@@ -13,6 +13,9 @@ without installing a package version that was published five minutes ago.
 - **Ships its own gate** — `lib/cooldown.py` decides what Homebrew may upgrade and upgrades
   explicit targets only; a bare `brew upgrade` never runs.
 - **Read-only report** — `--report` shows what would update, what is held, and why.
+- **Sudo without the prompt flood** — root-requiring cask upgrades are deferred in
+  unattended runs and installed together via `--sudo-batch` with one password prompt.
+  The password never passes through the script.
 - **Fail-closed** — if a release date cannot be established, the package is not touched.
 - **Logging and analysis** — every run logs to `~/Library/Logs/update-my-mac/`, optionally
   summarised by Simon Willison's `llm` when installed.
@@ -23,6 +26,7 @@ without installing a package version that was published five minutes ago.
 chmod +x update-my-mac.sh
 ./update-my-mac.sh --report      # look first, change nothing
 ./update-my-mac.sh --quick       # gated updates (default with no flag)
+./update-my-mac.sh --sudo-batch  # install the deferred sudo upgrades, one password prompt
 ./update-my-mac.sh --full        # add App Store, Xcode, macOS
 ```
 
@@ -87,13 +91,15 @@ Layout:
 ```
 /usr/local/libexec/update-my-mac/update-my-mac.sh
 /usr/local/libexec/update-my-mac/lib/cooldown.py
+/usr/local/libexec/update-my-mac/lib/sudo-askpass-defer.sh
 /usr/local/bin/update-my-mac -> ../libexec/update-my-mac/update-my-mac.sh
 ```
 
 The symlink is the only thing in `PATH`; the script resolves it and finds its helper. An
 existing flat-file install is backed up to `update-my-mac.backup.<timestamp>` (the two
-newest are kept), and `--install` refuses to run when `lib/cooldown.py` is missing — an
-install without it would silently refuse every Homebrew upgrade.
+newest are kept), and `--install` refuses to run when `lib/cooldown.py` or
+`lib/sudo-askpass-defer.sh` is missing — an incomplete tree would silently refuse every
+Homebrew upgrade or lose the unattended sudo guard.
 
 ```bash
 cd update-my-mac && git pull && ./update-my-mac.sh --install   # upgrade an existing install
@@ -109,6 +115,7 @@ Environment overrides: `UPDATE_MY_MAC_PREFIX` (default `/usr/local`) and
 |---|---|
 | [`docs/cooldown.md`](docs/cooldown.md) | you want the policy: windows, per-manager settings, exemptions, what is not covered |
 | [`docs/homebrew-gate.md`](docs/homebrew-gate.md) | you need to know how the Homebrew gate decides, or you are changing it |
+| [`docs/sudo-batch.md`](docs/sudo-batch.md) | a cask needs root: how deferral and the single-password batch work |
 | [`docs/operations.md`](docs/operations.md) | a run failed, something is held unexpectedly, or you need an emergency bypass |
 | [`AGENTS.md`](AGENTS.md) | you are an agent working on this repository |
 
