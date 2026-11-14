@@ -8,10 +8,10 @@
 #   curl -fsSL https://raw.githubusercontent.com/olafgeibig/update-my-mac/main/install.sh | bash
 #
 # Pinned version:
-#   curl -fsSL .../install.sh | bash -s -- --ref v2026.11.11
+#   curl -fsSL .../install.sh | bash -s -- --ref v2026.11.14
 #
 # Overrides (environment):
-#   UPDATE_MY_MAC_REF       latest (default) or a release tag such as v2026.11.11
+#   UPDATE_MY_MAC_REF       latest (default) or a release tag such as v2026.11.14
 #   UPDATE_MY_MAC_PREFIX    install prefix, default /usr/local
 #   UPDATE_MY_MAC_TARBALL   install from a local .tar.gz instead of GitHub
 #

@@ -73,7 +73,7 @@ curl -fsSL https://raw.githubusercontent.com/olafgeibig/update-my-mac/main/insta
 ```
 
 It downloads the release tarball, verifies its SHA256, and installs the same tree as
-below. Pin a version with `... | bash -s -- --ref v2026.11.11`. It refuses to install if
+below. Pin a version with `... | bash -s -- --ref v2026.11.14`. It refuses to install if
 the checksum file is missing or does not match.
 
 ### From a checkout
